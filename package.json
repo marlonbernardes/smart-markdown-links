@@ -2,7 +2,20 @@
   "name": "smart-markdown-links",
   "displayName": "Smart Markdown Links",
   "description": "Smart markdown link editing with inline display and click-to-edit functionality",
+  "icon": "images/icon.png",
   "version": "1.0.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/marlonbernardes/smart-markdown-links.git"
+  },
+  "license": "MIT",
+  "keywords": [
+    "markdown",
+    "links",
+    "editor",
+    "productivity",
+    "documentation"
+  ],
   "publisher": "marlonbernardes",
   "engines": {
     "vscode": "^1.74.0"
