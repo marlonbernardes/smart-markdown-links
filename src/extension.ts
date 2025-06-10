@@ -3,6 +3,7 @@ import * as vscode from 'vscode';
 class MarkdownLinkDecorator {
     private decoratedType: vscode.TextEditorDecorationType;
     private expandedType: vscode.TextEditorDecorationType;
+    private hiddenType: vscode.TextEditorDecorationType;
     private isExpanded = false;
     private currentRange: vscode.Range | null = null;
 
@@ -10,21 +11,24 @@ class MarkdownLinkDecorator {
         // Decoration type for collapsed (underlined text only) view
         this.decoratedType = vscode.window.createTextEditorDecorationType({
             textDecoration: 'none',
-            cursor: 'pointer',
-            opacity: '0',
+            color: 'transparent',
             letterSpacing: '-100em',
             backgroundColor: new vscode.ThemeColor('editor.background'),
-            after: {
-                contentText: '',
-                textDecoration: 'underline',
-                color: new vscode.ThemeColor('textLink.foreground')
-            }
+            rangeBehavior: vscode.DecorationRangeBehavior.ClosedOpen
         });
 
         // Decoration type for expanded (raw markdown) view
         this.expandedType = vscode.window.createTextEditorDecorationType({
-            backgroundColor: new vscode.ThemeColor('editor.selectionBackground'),
-            color: new vscode.ThemeColor('editor.foreground')
+            backgroundColor: new vscode.ThemeColor('editor.findMatchHighlightBackground'),
+            color: new vscode.ThemeColor('editor.foreground'),
+            textDecoration: 'none'
+        });
+
+        // Decoration type for hiding parts of long links
+        this.hiddenType = vscode.window.createTextEditorDecorationType({
+            color: 'transparent',
+            backgroundColor: 'transparent',
+            textDecoration: 'none'
         });
     }
 
@@ -39,53 +43,56 @@ class MarkdownLinkDecorator {
         // Update decorations when document changes
         vscode.workspace.onDidChangeTextDocument(event => {
             const editor = vscode.window.activeTextEditor;
-            if (editor && event.document === editor.document) {
-                const position = editor.selection.active;
-                const link = this.findLinkAtPosition(editor.document, position);
-                
-                if (link && this.isExpanded) {
-                    // Keep expanded state while editing
-                    this.currentRange = link.range;
-                    this.updateDecorations(editor);
-                } else if (!this.isCursorInAnyLink(editor)) {
-                    this.isExpanded = false;
-                    this.currentRange = null;
-                    this.updateDecorations(editor);
-                }
+            if (editor && event.document === editor.document && !this.isExpanded) {
+                this.updateDecorations(editor);
             }
         }, null, context.subscriptions);
+
+        let isProcessingClick = false;
 
         // Handle clicks
         vscode.window.onDidChangeTextEditorSelection(event => {
             const editor = event.textEditor;
+            if (!editor || isProcessingClick) return;
+
+            isProcessingClick = true;
             const position = event.selections[0].active;
 
-            if (this.isExpanded && this.currentRange && !this.currentRange.contains(position)) {
-                // Click outside the expanded link - collapse it
-                this.isExpanded = false;
-                this.currentRange = null;
-                this.updateDecorations(editor);
-            } else if (!this.isExpanded) {
-                // Check if click is on a link
-                const link = this.findLinkAtPosition(editor.document, position);
-                if (link) {
-                    this.isExpanded = true;
-                    this.currentRange = link.range;
-                    this.updateDecorations(editor);
+            try {
+                if (!this.isExpanded) {
+                    const link = this.findLinkAtPosition(editor.document, position);
+                    if (link) {
+                        this.isExpanded = true;
+                        this.currentRange = link.range;
+                        this.updateDecorations(editor);
 
-                    // Select the text portion of the link (between [ and ])
-                    const startPos = editor.document.positionAt(
-                        editor.document.offsetAt(link.range.start) + 1
-                    );
-                    const text = editor.document.getText(link.range);
-                    const closeBracket = text.indexOf(']');
-                    if (closeBracket > 0) {
-                        const endPos = editor.document.positionAt(
-                            editor.document.offsetAt(link.range.start) + closeBracket
-                        );
-                        editor.selection = new vscode.Selection(startPos, endPos);
+                        // Get the URL part
+                        const text = editor.document.getText(link.range);
+                        const openParen = text.indexOf('(');
+                        const closeParen = text.lastIndexOf(')');
+                        if (openParen > 0 && closeParen > openParen) {
+                            const startPos = editor.document.positionAt(
+                                editor.document.offsetAt(link.range.start) + openParen + 1
+                            );
+                            const endPos = editor.document.positionAt(
+                                editor.document.offsetAt(link.range.start) + closeParen
+                            );
+                            // Use a timeout to prevent selection event recursion
+                            setTimeout(() => {
+                                editor.selection = new vscode.Selection(startPos, endPos);
+                                isProcessingClick = false;
+                            }, 50);
+                            return;
+                        }
                     }
+                } else if (this.currentRange && !this.currentRange.contains(position)) {
+                    this.isExpanded = false;
+                    this.currentRange = null;
+                    this.updateDecorations(editor);
                 }
+            } finally {
+                // Reset flag if not done in the timeout
+                isProcessingClick = false;
             }
         }, null, context.subscriptions);
 
@@ -122,6 +129,7 @@ class MarkdownLinkDecorator {
         const linkRegex = /\[([^\]]+)\]\(([^)]+)\)/g;
         const decorations: vscode.DecorationOptions[] = [];
         const expandedDecorations: vscode.DecorationOptions[] = [];
+        const hiddenDecorations: vscode.DecorationOptions[] = [];
 
         let match;
         while ((match = linkRegex.exec(text)) !== null) {
@@ -133,20 +141,37 @@ class MarkdownLinkDecorator {
                 // Show raw markdown for the expanded link
                 expandedDecorations.push({ range });
             } else {
+                // Get link text
+                const textLength = match[1].length;
+                const urlStartPos = editor.document.positionAt(match.index + 1);
+                const urlEndPos = editor.document.positionAt(match.index + match[0].length - 1);
+                
                 // Show only the text for collapsed links
                 decorations.push({
                     range,
+                    hoverMessage: match[2], // Show URL on hover
                     renderOptions: {
+                        before: {
+                            contentText: match[1], // link text
+                            textDecoration: 'underline',
+                            color: new vscode.ThemeColor('textLink.foreground')
+                        },
                         after: {
-                            contentText: match[1] // link text
+                            contentText: ' ', // space after
+                            color: new vscode.ThemeColor('editor.foreground')
                         }
                     }
                 });
+
+                // Hide the actual URL part
+                const urlRange = new vscode.Range(urlStartPos, urlEndPos);
+                hiddenDecorations.push({ range: urlRange });
             }
         }
 
         editor.setDecorations(this.decoratedType, decorations);
         editor.setDecorations(this.expandedType, expandedDecorations);
+        editor.setDecorations(this.hiddenType, hiddenDecorations);
     }
 
     private findLinkAtPosition(document: vscode.TextDocument, position: vscode.Position): { range: vscode.Range } | null {
