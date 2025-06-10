@@ -3,7 +3,7 @@
   "displayName": "Smart Markdown Links",
   "description": "Smart markdown link editing with inline display and click-to-edit functionality",
   "icon": "images/icon.png",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "repository": {
     "type": "git",
     "url": "https://github.com/marlonbernardes/smart-markdown-links.git"
